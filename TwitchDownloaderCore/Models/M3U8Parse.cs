@@ -478,7 +478,7 @@ namespace TwitchDownloaderCore.Models
                     } while (true);
 
                     // Sometimes Twitch's M3U8 response lacks a Framerate value, among other things. We can just guess the framerate using the Video value.
-                    if (streamInfo.Framerate == 0 && Regex.IsMatch(streamInfo.Video, @"p\d+$", RegexOptions.RightToLeft))
+                    if (streamInfo.Framerate == 0 && streamInfo.Video != null && Regex.IsMatch(streamInfo.Video, @"p\d+$", RegexOptions.RightToLeft))
                     {
                         var index = streamInfo.Video.LastIndexOf('p');
                         streamInfo.Framerate = int.Parse(streamInfo.Video.AsSpan(index + 1));

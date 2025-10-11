@@ -33,54 +33,68 @@ namespace TwitchDownloaderCore.Extensions
             const string RESOLUTION_FRAMERATE_PATTERN = /*lang=regex*/@"\d{3,4}p\d{2,3}";
 
             var mediaInfo = stream.MediaInfo;
-            if (stream.IsAudioOnly() || Regex.IsMatch(mediaInfo.Name, RESOLUTION_FRAMERATE_PATTERN))
+            if (mediaInfo != null)
             {
-                return mediaInfo.Name;
+                if (mediaInfo.Name != null)
+                {
+                    if (stream.IsAudioOnly() || Regex.IsMatch(mediaInfo.Name, RESOLUTION_FRAMERATE_PATTERN))
+                    {
+                        return mediaInfo.Name;
+                    }
+                }
+                if (mediaInfo.GroupId != null)
+                {
+                    if (Regex.IsMatch(mediaInfo.GroupId, RESOLUTION_FRAMERATE_PATTERN))
+                    {
+                        var hyphenIndex = mediaInfo.GroupId.IndexOf('-');
+                        return hyphenIndex > 0 ? mediaInfo.GroupId[..hyphenIndex] : mediaInfo.GroupId;
+                    }
+                }
             }
 
             var streamInfo = stream.StreamInfo;
-            if (Regex.IsMatch(streamInfo.Video, RESOLUTION_FRAMERATE_PATTERN))
+            if (streamInfo != null)
             {
-                var hyphenIndex = streamInfo.Video.IndexOf('-');
-                return hyphenIndex > 0 ? streamInfo.Video[..hyphenIndex] : streamInfo.Video;
+                if (streamInfo.Video != null)
+                {
+                    if (Regex.IsMatch(streamInfo.Video, RESOLUTION_FRAMERATE_PATTERN))
+                    {
+                        var hyphenIndex = streamInfo.Video.IndexOf('-');
+                        return hyphenIndex > 0 ? streamInfo.Video[..hyphenIndex] : streamInfo.Video;
+                    }
+                }
+
+                if (streamInfo.Resolution != default)
+                {
+                    var frameHeight = streamInfo.Resolution.Height;
+
+                    if (streamInfo.Framerate == 0)
+                    {
+                        return appendSource && stream.IsSource()
+                            ? $"{frameHeight}p (Source)"
+                            : $"{frameHeight}p";
+                    }
+
+                    // Some M3U8 responses have framerate values up to 2fps more/less than the typical framerate.
+                    var frameRate = (uint)(Math.Round(streamInfo.Framerate / 10) * 10);
+
+                    return appendSource && stream.IsSource()
+                        ? $"{frameHeight}p{frameRate} (Source)"
+                        : $"{frameHeight}p{frameRate}";
+                }
             }
 
-            if (Regex.IsMatch(mediaInfo.GroupId, RESOLUTION_FRAMERATE_PATTERN))
-            {
-                var hyphenIndex = mediaInfo.GroupId.IndexOf('-');
-                return hyphenIndex > 0 ? mediaInfo.GroupId[..hyphenIndex] : mediaInfo.GroupId;
-            }
-
-            if (streamInfo.Resolution == default)
-            {
-                return stream.IsSource()
-                    ? "Source"
-                    : "";
-            }
-
-            var frameHeight = streamInfo.Resolution.Height;
-
-            if (streamInfo.Framerate == 0)
-            {
-                return appendSource && stream.IsSource()
-                    ? $"{frameHeight}p (Source)"
-                    : $"{frameHeight}p";
-            }
-
-            // Some M3U8 responses have framerate values up to 2fps more/less than the typical framerate.
-            var frameRate = (uint)(Math.Round(streamInfo.Framerate / 10) * 10);
-
-            return appendSource && stream.IsSource()
-                ? $"{frameHeight}p{frameRate} (Source)"
-                : $"{frameHeight}p{frameRate}";
+            return stream.IsSource()
+                ? "Source"
+                : "";
         }
 
         public static bool IsSource(this M3U8.Stream stream)
-            => stream.MediaInfo.Name.Contains("source", StringComparison.OrdinalIgnoreCase) ||
-               stream.MediaInfo.GroupId.Equals("chunked", StringComparison.OrdinalIgnoreCase);
+            => stream.MediaInfo?.Name?.Contains("source", StringComparison.OrdinalIgnoreCase) == true ||
+               stream.MediaInfo?.GroupId?.Equals("chunked", StringComparison.OrdinalIgnoreCase) == true;
 
         public static bool IsAudioOnly(this M3U8.Stream stream)
-            => stream.MediaInfo.Name.Contains("audio", StringComparison.OrdinalIgnoreCase);
+            => stream.MediaInfo?.Name?.Contains("audio", StringComparison.OrdinalIgnoreCase) == true;
 
         public static M3U8 WithUnavailableMedia(this M3U8 m3u8)
         {

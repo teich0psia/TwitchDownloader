@@ -94,53 +94,35 @@ namespace TwitchDownloaderWPF
             }
 
             currentVideoId = videoId;
+            btnGetInfo.IsEnabled = false;
             try
             {
-                Task<GqlVideoResponse> taskVideoInfo = TwitchHelper.GetVideoInfo(videoId);
-                Task<GqlVideoTokenResponse> taskAccessToken = TwitchHelper.GetVideoToken(videoId, TextOauth.Text);
-                await Task.WhenAll(taskVideoInfo, taskAccessToken);
-
-                if (taskAccessToken.Result.data.videoPlaybackAccessToken is null)
+                // 1. Get basic video info first (this should work without auth)
+                GqlVideoResponse videoInfoResponse = await TwitchHelper.GetVideoInfo(videoId);
+                if (videoInfoResponse.data.video == null)
                 {
                     throw new NullReferenceException("Invalid VOD, deleted/expired VOD possibly?");
                 }
 
-                var thumbUrl = taskVideoInfo.Result.data.video.thumbnailURLs.FirstOrDefault();
+                // 2. Update basic UI elements
+                var thumbUrl = videoInfoResponse.data.video.thumbnailURLs.FirstOrDefault();
                 if (!ThumbnailService.TryGetThumb(thumbUrl, out var image))
                 {
                     AppendLog(Translations.Strings.ErrorLog + Translations.Strings.UnableToFindThumbnail);
                     _ = ThumbnailService.TryGetThumb(ThumbnailService.THUMBNAIL_MISSING_URL, out image);
                 }
                 imgThumbnail.Source = image;
-
-                comboQuality.Items.Clear();
-
-                var playlistString = await TwitchHelper.GetVideoPlaylist(videoId, taskAccessToken.Result.data.videoPlaybackAccessToken.value, taskAccessToken.Result.data.videoPlaybackAccessToken.signature);
-                if (playlistString.Contains("vod_manifest_restricted") || playlistString.Contains("unauthorized_entitlements"))
-                {
-                    throw new NullReferenceException(Translations.Strings.InsufficientAccessMayNeedOauth);
-                }
-
-                var videoPlaylist = M3U8.Parse(playlistString);
-                videoPlaylist.SortStreamsByQuality();
-                var qualities = VideoQualities.FromM3U8(videoPlaylist);
-
-                //Add video qualities to combo quality
-                foreach (var quality in qualities)
-                {
-                    var item = new ComboBoxItem { Content = quality.Name, Tag = quality };
-                    comboQuality.Items.Add(item);
-                }
-
-                comboQuality.SelectedIndex = 0;
-
-                vodLength = TimeSpan.FromSeconds(taskVideoInfo.Result.data.video.lengthSeconds);
-                textStreamer.Text = taskVideoInfo.Result.data.video.owner?.displayName ?? Translations.Strings.UnknownUser;
-                streamerId = taskVideoInfo.Result.data.video.owner?.id;
-                textTitle.Text = taskVideoInfo.Result.data.video.title;
-                var videoCreatedAt = taskVideoInfo.Result.data.video.createdAt;
+                vodLength = TimeSpan.FromSeconds(videoInfoResponse.data.video.lengthSeconds);
+                textStreamer.Text = videoInfoResponse.data.video.owner?.displayName ?? Translations.Strings.UnknownUser;
+                streamerId = videoInfoResponse.data.video.owner?.id;
+                textTitle.Text = videoInfoResponse.data.video.title;
+                var videoCreatedAt = videoInfoResponse.data.video.createdAt;
                 textCreatedAt.Text = Settings.Default.UTCVideoTime ? videoCreatedAt.ToString(CultureInfo.CurrentCulture) : videoCreatedAt.ToLocalTime().ToString(CultureInfo.CurrentCulture);
                 currentVideoTime = Settings.Default.UTCVideoTime ? videoCreatedAt : videoCreatedAt.ToLocalTime();
+                viewCount = videoInfoResponse.data.video.viewCount;
+                game = videoInfoResponse.data.video.game?.displayName ?? Translations.Strings.UnknownGame;
+
+                // Reset and update trim UI
                 var urlTimeCodeMatch = TwitchRegex.UrlTimeCode.Match(textUrl.Text);
                 if (urlTimeCodeMatch.Success)
                 {
@@ -156,38 +138,74 @@ namespace TwitchDownloaderWPF
                     numStartMinute.Value = 0;
                     numStartSecond.Value = 0;
                 }
-
-                if (vodLength > TimeSpan.Zero)
-                {
-                    numStartHour.Maximum = (int)vodLength.TotalHours;
-                    numEndHour.Maximum = (int)vodLength.TotalHours;
-                }
-                else
-                {
-                    numStartHour.Maximum = 48;
-                    numEndHour.Maximum = 48;
-                }
-
+                if (vodLength > TimeSpan.Zero) { numStartHour.Maximum = (int)vodLength.TotalHours; numEndHour.Maximum = (int)vodLength.TotalHours; } else { numStartHour.Maximum = 48; numEndHour.Maximum = 48; }
                 numEndHour.Value = (int)vodLength.TotalHours;
                 numEndMinute.Value = vodLength.Minutes;
                 numEndSecond.Value = vodLength.Seconds;
                 labelLength.Text = vodLength.ToString("c");
-                viewCount = taskVideoInfo.Result.data.video.viewCount;
-                game = taskVideoInfo.Result.data.video.game?.displayName ?? Translations.Strings.UnknownGame;
+
+                // 3. Try to get playlist
+                string playlistString = null;
+                try
+                {
+                    // 3a. Try standard auth flow
+                    GqlVideoTokenResponse accessToken = await TwitchHelper.GetVideoToken(videoId, TextOauth.Text);
+                    if (accessToken.data.videoPlaybackAccessToken is null)
+                    {
+                        throw new Exception("Failed to get video token."); // This will be caught and trigger the fallback
+                    }
+                    playlistString = await TwitchHelper.GetVideoPlaylist(videoId, accessToken.data.videoPlaybackAccessToken.value, accessToken.data.videoPlaybackAccessToken.signature);
+                    if (playlistString.Contains("vod_manifest_restricted") || playlistString.Contains("unauthorized_entitlements"))
+                    {
+                        throw new Exception("VOD is restricted."); // This will be caught and trigger the fallback
+                    }
+                }
+                catch
+                {
+                    // 3b. If standard flow fails, try unsubscribed flow if checked
+                    if (CheckUnsubscribed.IsChecked.GetValueOrDefault())
+                    {
+                        AppendLog("Standard VOD info failed. Attemping to fetch unsubscribed VOD playlist.");
+                        playlistString = await TwitchHelper.GetVideoPlaylist_Unsub(videoId, new WpfTaskProgress((LogLevel)Settings.Default.LogLevels, SetPercent, SetStatus, AppendLog));
+                        if (string.IsNullOrWhiteSpace(playlistString))
+                        {
+                            throw new Exception("Failed to get unsubscribed VOD playlist. The VOD may not be supported or may have been deleted.");
+                        }
+                    }
+                    else
+                    {
+                        // If not checked, throw the original error or a generic one
+                        throw new Exception(Translations.Strings.InsufficientAccessMayNeedOauth);
+                    }
+                }
+
+                // 4. Populate quality list from the obtained playlist
+                comboQuality.Items.Clear();
+                var videoPlaylist = M3U8.Parse(playlistString);
+                videoPlaylist.SortStreamsByQuality();
+                var qualities = VideoQualities.FromM3U8(videoPlaylist);
+                foreach (var quality in qualities)
+                {
+                    var item = new ComboBoxItem { Content = quality.Name, Tag = quality };
+                    comboQuality.Items.Add(item);
+                }
+                comboQuality.SelectedIndex = 0;
 
                 UpdateVideoSizeEstimates();
-
                 SetEnabled(true);
             }
             catch (Exception ex)
             {
-                btnGetInfo.IsEnabled = true;
                 AppendLog(Translations.Strings.ErrorLog + ex.Message);
                 MessageBox.Show(Application.Current.MainWindow!, Translations.Strings.UnableToGetVideoInfo, Translations.Strings.UnableToGetInfo, MessageBoxButton.OK, MessageBoxImage.Error);
                 if (Settings.Default.VerboseErrors)
                 {
                     MessageBox.Show(Application.Current.MainWindow!, ex.ToString(), Translations.Strings.VerboseErrorOutput, MessageBoxButton.OK, MessageBoxImage.Error);
                 }
+            }
+            finally
+            {
+                btnGetInfo.IsEnabled = true;
             }
         }
 
@@ -216,6 +234,7 @@ namespace TwitchDownloaderWPF
                     checkEnd.IsChecked == true ? new TimeSpan((int)numEndHour.Value, (int)numEndMinute.Value, (int)numEndSecond.Value) : vodLength,
                     vodLength, viewCount, game) + FilenameService.GuessVodFileExtension(((ComboBoxItem)comboQuality.SelectedItem).Tag.ToString())),
                 Oauth = TextOauth.Text,
+                AllowUnsubscribedDownload = CheckUnsubscribed.IsChecked.GetValueOrDefault(),
                 Quality = ((ComboBoxItem)comboQuality.SelectedItem).Tag.ToString(),
                 Id = currentVideoId,
                 TrimBeginning = checkStart.IsChecked.GetValueOrDefault(),

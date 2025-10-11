@@ -675,7 +675,18 @@ namespace TwitchDownloaderCore
             }
 
             var playlistString = await TwitchHelper.GetVideoPlaylist(downloadOptions.Id, accessToken.data.videoPlaybackAccessToken.value, accessToken.data.videoPlaybackAccessToken.signature);
-            if (playlistString.Contains("vod_manifest_restricted") || playlistString.Contains("unauthorized_entitlements"))
+            
+            if ((playlistString.Contains("vod_manifest_restricted") || playlistString.Contains("unauthorized_entitlements")) && downloadOptions.AllowUnsubscribedDownload)
+            {
+                _progress.LogInfo("Standard VOD download failed. Attemping to fetch unsubscribed VOD playlist.");
+                playlistString = await TwitchHelper.GetVideoPlaylist_Unsub(downloadOptions.Id, _progress);
+
+                if (string.IsNullOrWhiteSpace(playlistString))
+                {
+                    throw new NullReferenceException("Insufficient access to VOD, and the unsubscribed download attempt failed. OAuth may be required.");
+                }
+            }
+            else if (playlistString.Contains("vod_manifest_restricted") || playlistString.Contains("unauthorized_entitlements"))
             {
                 throw new NullReferenceException("Insufficient access to VOD, OAuth may be required.");
             }

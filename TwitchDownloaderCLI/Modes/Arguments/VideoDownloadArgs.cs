@@ -34,6 +34,9 @@ namespace TwitchDownloaderCLI.Modes.Arguments
         [Option("oauth", HelpText = "OAuth access token to download subscriber only VODs. DO NOT SHARE THIS WITH ANYONE.")]
         public string Oauth { get; set; }
 
+        [Option("allow-unsub", Default = false, HelpText = "Tries to download subscriber-only VODs without an OAuth token. May not work for all VODs.")]
+        public bool AllowUnsubscribedDownload { get; set; }
+
         [Option("ffmpeg-path", HelpText = "Path to FFmpeg executable.")]
         public string FfmpegPath { get; set; }
 

@@ -1,5 +1,6 @@
-﻿using SkiaSharp;
+using SkiaSharp;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
@@ -47,6 +48,20 @@ namespace TwitchDownloaderCore
             using var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
             response.EnsureSuccessStatusCode();
             return await response.Content.ReadFromJsonAsync<GqlVideoResponse>();
+        }
+
+        public static async Task<GqlVideoResponseUnsub> GetVideoInfo_Unsub(long videoId)
+        {
+            var request = new HttpRequestMessage()
+            {
+                RequestUri = new Uri("https://gql.twitch.tv/gql"),
+                Method = HttpMethod.Post,
+                Content = new StringContent("{\"query\":\"query{video(id:\\\"" + videoId + "\\\"){broadcastType,createdAt,seekPreviewsURL,owner{login}}}\",\"variables\":{}}", Encoding.UTF8, "application/json")
+            };
+            request.Headers.Add("Client-ID", "kimne78kx3ncx6brgo4mv6wki5h1ko");
+            using var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+            response.EnsureSuccessStatusCode();
+            return await response.Content.ReadFromJsonAsync<GqlVideoResponseUnsub>();
         }
 
         public static async Task<GqlVideoTokenResponse> GetVideoToken(long videoId, string authToken)
@@ -110,6 +125,117 @@ namespace TwitchDownloaderCore
             response.EnsureSuccessStatusCode();
 
             return await response.Content.ReadAsStringAsync();
+        }
+
+        public static async Task<string> GetVideoPlaylist_Unsub(long videoId, ITaskLogger logger)
+        {
+            GqlVideoResponseUnsub videoInfoResponse = await GetVideoInfo_Unsub(videoId);
+            if (videoInfoResponse.data.video == null)
+            {
+                // VOD may be deleted
+                return null;
+            }
+            var videoInfo = videoInfoResponse.data.video;
+
+            string seekPreviewsURL = videoInfo.seekPreviewsURL;
+            if (string.IsNullOrWhiteSpace(seekPreviewsURL))
+            {
+                logger.LogInfo("VOD is not processed. It may not be available for unsubscribed download.");
+                return null;
+            }
+
+            var urlParts = seekPreviewsURL.Replace("https://", "").Split('/');
+            string domain = urlParts[0];
+            string vodHash = urlParts[1];
+
+            var resolutions = new Dictionary<string, (string name, string resolution, int bandwidth)>
+            {
+                { "chunked", ("1080p60", "1920x1080", 8000000) },
+                { "1080p30", ("1080p30", "1920x1080", 3000000) },
+                { "720p60", ("720p60", "1280x720", 4500000) },
+                { "720p30", ("720p30", "1280x720", 2000000) },
+                { "480p30", ("480p30", "852x480", 1200000) },
+                { "360p30", ("360p30", "640x360", 600000) },
+                { "160p30", ("160p30", "284x160", 230000) },
+                { "audio_only", ("audio_only", null, 160000) }
+            };
+
+            bool isOldVod = (DateTime.UtcNow - videoInfo.createdAt).TotalDays > 1;
+            bool useHash = videoInfo.broadcastType == "HIGHLIGHT" || videoInfo.broadcastType == "UPLOAD" || !isOldVod;
+
+            var validQualities = new ConcurrentDictionary<string, (string name, string resolution, int bandwidth)>();
+
+            var tasks = new List<Task>();
+            foreach (var quality in resolutions)
+            {
+                tasks.Add(Task.Run(async () =>
+                {
+                    string qualityKey = quality.Key;
+                    string url;
+                    if (useHash)
+                    {
+                        url = $"https://{domain}/{vodHash}/{qualityKey}/index-dvr.m3u8";
+                    }
+                    else
+                    {
+                        url = $"https://{domain}/{qualityKey}/index-dvr.m3u8";
+                    }
+
+                    if (await IsValidUrl(url))
+                    {
+                        validQualities[url] = quality.Value;
+                    }
+                }));
+            }
+
+            await Task.WhenAll(tasks);
+
+            if (validQualities.Count == 0)
+            {
+                logger.LogInfo("No valid unsubscribed qualities found.");
+                return null;
+            }
+
+            var playlistBuilder = new StringBuilder();
+            playlistBuilder.AppendLine("#EXTM3U");
+
+            // Ensure consistent order
+            var orderedQualities = resolutions
+                .Where(q => validQualities.Any(vq => vq.Key.Contains($"/{q.Key}/")))
+                .ToList();
+
+            foreach (var quality in orderedQualities)
+            {
+                var qualityInfo = quality.Value;
+                var url = validQualities.First(vq => vq.Key.Contains($"/{quality.Key}/")).Key;
+
+                if (quality.Key == "audio_only")
+                {
+                    playlistBuilder.AppendLine($"#EXT-X-STREAM-INF:BANDWIDTH={qualityInfo.bandwidth},CODECS=\"mp4a.40.2\",NAME=\"Audio Only\"");
+                }
+                else
+                {
+                    var qualityName = qualityInfo.name;
+                    playlistBuilder.AppendLine($"#EXT-X-STREAM-INF:BANDWIDTH={qualityInfo.bandwidth},RESOLUTION={qualityInfo.resolution},CODECS=\"avc1.64002A,mp4a.40.2\",FRAME-RATE=60.000,NAME=\"{qualityName}\"");
+                }
+                playlistBuilder.AppendLine(url);
+            }
+
+            return playlistBuilder.ToString();
+        }
+
+        private static async Task<bool> IsValidUrl(string url)
+        {
+            try
+            {
+                using var request = new HttpRequestMessage(HttpMethod.Head, url);
+                using var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+                return response.IsSuccessStatusCode;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         private static bool IsAuthException(Exception ex)
