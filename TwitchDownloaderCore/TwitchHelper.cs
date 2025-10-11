@@ -1,3 +1,13 @@
+/*
+ * This file contains logic ported from the TwitchNoSub project.
+ *
+ * Original project: https://github.com/besuper/TwitchNoSub
+ * Original author: besuper
+ * Licensed under the Apache License, Version 2.0
+ *
+ * This file was modified by teich0psia
+ */
+
 using SkiaSharp;
 using System;
 using System.Collections.Concurrent;
