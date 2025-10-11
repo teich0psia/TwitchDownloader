@@ -162,19 +162,12 @@ namespace TwitchDownloaderWPF
                 }
                 catch
                 {
-                    // 3b. If standard flow fails, try unsubscribed flow if checked
-                    if (CheckUnsubscribed.IsChecked.GetValueOrDefault())
+                    // 3b. If standard flow fails, automatically try the unsubscribed flow.
+                    AppendLog("Standard VOD info failed. Automatically trying to fetch unsubscribed VOD playlist.");
+                    playlistString = await TwitchHelper.GetVideoPlaylist_Unsub(videoId, new WpfTaskProgress((LogLevel)Settings.Default.LogLevels, SetPercent, SetStatus, AppendLog));
+                    if (string.IsNullOrWhiteSpace(playlistString))
                     {
-                        AppendLog("Standard VOD info failed. Attemping to fetch unsubscribed VOD playlist.");
-                        playlistString = await TwitchHelper.GetVideoPlaylist_Unsub(videoId, new WpfTaskProgress((LogLevel)Settings.Default.LogLevels, SetPercent, SetStatus, AppendLog));
-                        if (string.IsNullOrWhiteSpace(playlistString))
-                        {
-                            throw new Exception("Failed to get unsubscribed VOD playlist. The VOD may not be supported or may have been deleted.");
-                        }
-                    }
-                    else
-                    {
-                        // If not checked, throw the original error or a generic one
+                        // If the unsubscribed flow also fails, then we show the original error.
                         throw new Exception(Translations.Strings.InsufficientAccessMayNeedOauth);
                     }
                 }
@@ -234,7 +227,6 @@ namespace TwitchDownloaderWPF
                     checkEnd.IsChecked == true ? new TimeSpan((int)numEndHour.Value, (int)numEndMinute.Value, (int)numEndSecond.Value) : vodLength,
                     vodLength, viewCount, game) + FilenameService.GuessVodFileExtension(((ComboBoxItem)comboQuality.SelectedItem).Tag.ToString())),
                 Oauth = TextOauth.Text,
-                AllowUnsubscribedDownload = CheckUnsubscribed.IsChecked.GetValueOrDefault(),
                 Quality = ((ComboBoxItem)comboQuality.SelectedItem).Tag.ToString(),
                 Id = currentVideoId,
                 TrimBeginning = checkStart.IsChecked.GetValueOrDefault(),

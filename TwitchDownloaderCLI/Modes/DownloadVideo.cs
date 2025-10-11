@@ -76,7 +76,6 @@ namespace TwitchDownloaderCLI.Modes
                     return Array.Empty<DirectoryInfo>();
                 },
                 FileCollisionCallback = collisionHandler.HandleCollisionCallback,
-                AllowUnsubscribedDownload = inputOptions.AllowUnsubscribedDownload,
             };
 
             return downloadOptions;

@@ -22,6 +22,5 @@ namespace TwitchDownloaderCore.Options
         public Func<FileInfo, FileInfo> FileCollisionCallback { get; set; } = info => info;
         public VideoTrimMode TrimMode { get; set; }
         public bool DelayDownload { get; set; }
-        public bool AllowUnsubscribedDownload { get; set; }
     }
 }
