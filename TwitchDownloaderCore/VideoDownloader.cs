@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -596,6 +596,16 @@ namespace TwitchDownloaderCore
 
                 _progress.LogError($"Received {(int)ex.StatusCode}: {ex.StatusCode} when fetching playlist. Attempting workaround...");
                 playlistString = await _httpClient.GetStringAsync(newUrl, cancellationToken);
+            }
+
+            return ParseAndProcessPlaylist(playlistString);
+        }
+
+        internal static (M3U8 playlist, DateTimeOffset airDate) ParseAndProcessPlaylist(string playlistString)
+        {
+            if (!playlistString.StartsWith("#EXTM3U"))
+            {
+                playlistString = "#EXTM3U\n" + playlistString;
             }
 
             var playlist = M3U8.Parse(playlistString);
