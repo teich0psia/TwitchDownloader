@@ -632,19 +632,20 @@ namespace TwitchDownloaderCore
                 var trimTotalSeconds = (decimal)downloadOptions.TrimBeginningTime.TotalSeconds;
                 foreach (var videoPart in streamList)
                 {
-                    if (startTime + videoPart.PartInfo.Duration > trimTotalSeconds)
+                    var partDuration = videoPart.PartInfo?.Duration ?? 0;
+                    if (startTime + partDuration > trimTotalSeconds)
                     {
                         startOffset = trimTotalSeconds - startTime;
                         break;
                     }
 
                     startIndex++;
-                    startTime += videoPart.PartInfo.Duration;
+                    startTime += partDuration;
                 }
             }
 
             var endIndex = streamList.Count;
-            var endTime = streamList.Sum(x => x.PartInfo.Duration);
+            var endTime = streamList.Sum(x => x.PartInfo?.Duration ?? 0);
             var endOffset = 0m;
             if (downloadOptions.TrimEnding)
             {
@@ -652,16 +653,17 @@ namespace TwitchDownloaderCore
                 for (var i = streamList.Count - 1; i >= 0; i--)
                 {
                     var videoPart = streamList[i];
-                    if (endTime - videoPart.PartInfo.Duration < trimTotalSeconds)
+                    var partDuration = videoPart.PartInfo?.Duration ?? 0;
+                    if (endTime - partDuration < trimTotalSeconds)
                     {
                         endOffset = endTime - trimTotalSeconds;
-                        if (endOffset > 0) endDuration = videoPart.PartInfo.Duration - endOffset;
+                        if (endOffset > 0) endDuration = partDuration - endOffset;
 
                         break;
                     }
 
                     endIndex--;
-                    endTime -= videoPart.PartInfo.Duration;
+                    endTime -= partDuration;
                 }
             }
 

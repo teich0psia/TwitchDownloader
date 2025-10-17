@@ -156,7 +156,17 @@ namespace TwitchDownloaderCore
 
             var urlParts = seekPreviewsURL.Replace("https://", "").Split('/');
             string domain = urlParts[0];
-            string vodHash = urlParts[1];
+            
+            string vodSpecialID = "";
+            var storyboardPathIndex = Array.FindIndex(urlParts, x => x.Contains("storyboards"));
+            if (storyboardPathIndex > 0)
+            {
+                vodSpecialID = urlParts[storyboardPathIndex - 1];
+            }
+            else
+            {
+                return null;
+            }
 
             var resolutions = new Dictionary<string, (string name, string resolution, int bandwidth)>
             {
@@ -170,8 +180,8 @@ namespace TwitchDownloaderCore
                 { "audio_only", ("audio_only", null, 160000) }
             };
 
-            bool isOldVod = (DateTime.UtcNow - videoInfo.createdAt).TotalDays > 1;
-            bool useHash = videoInfo.broadcastType == "HIGHLIGHT" || videoInfo.broadcastType == "UPLOAD" || !isOldVod;
+            double daysDifference = (DateTime.UtcNow - videoInfo.createdAt).TotalDays;
+            string broadcastType = videoInfo.broadcastType.ToLower();
 
             var validQualities = new ConcurrentDictionary<string, (string name, string resolution, int bandwidth)>();
 
@@ -181,17 +191,22 @@ namespace TwitchDownloaderCore
                 tasks.Add(Task.Run(async () =>
                 {
                     string qualityKey = quality.Key;
-                    string url;
-                    if (useHash)
+                    string url = null;
+
+                    if (broadcastType == "highlight")
                     {
-                        url = $"https://{domain}/{vodHash}/{qualityKey}/index-dvr.m3u8";
+                        url = $"https://{domain}/{vodSpecialID}/{qualityKey}/highlight-{videoId}.m3u8";
+                    }
+                    else if (broadcastType == "upload" && daysDifference > 7)
+                    {
+                        url = $"https://{domain}/{videoInfo.owner.login}/{videoId}/{vodSpecialID}/{qualityKey}/index-dvr.m3u8";
                     }
                     else
                     {
-                        url = $"https://{domain}/{qualityKey}/index-dvr.m3u8";
+                        url = $"https://{domain}/{vodSpecialID}/{qualityKey}/index-dvr.m3u8";
                     }
 
-                    if (await IsValidUrl(url))
+                    if (url != null && await IsValidUrl(url))
                     {
                         validQualities[url] = quality.Value;
                     }
